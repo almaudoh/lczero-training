@@ -1608,18 +1608,22 @@ class TFProcess:
 
     # multi-head attention in encoder blocks
 
-    def mha(self, inputs, emb_size: int, d_model: int, num_heads: int, initializer, name: str):
+    def mha(self, inputs, emb_size: int, d_model: int, num_heads: int,
+            initializer, name: str):
         assert d_model % num_heads == 0
         depth = d_model // num_heads
         # query, key, and value vectors for self-attention
         # inputs b, 64, sz
 
-        q = tf.keras.layers.Dense(
-            d_model, name=name+"/wq", kernel_initializer="glorot_normal")(inputs)
-        k = tf.keras.layers.Dense(
-            d_model, name=name+"/wk", kernel_initializer="glorot_normal")(inputs)
-        v = tf.keras.layers.Dense(
-            d_model, name=name+"/wv", kernel_initializer=initializer)(inputs)
+        q = tf.keras.layers.Dense(d_model,
+                                  name=name+"/wq",
+                                  kernel_initializer="glorot_normal")(inputs)
+        k = tf.keras.layers.Dense(d_model,
+                                  name=name+"/wk",
+                                  kernel_initializer="glorot_normal")(inputs)
+        v = tf.keras.layers.Dense(d_model,
+                                  name=name+"/wv",
+                                  kernel_initializer=initializer)(inputs)
 
         # split q, k and v into smaller vectors of size "depth" -- one for each head in multi-head attention
         batch_size = tf.shape(q)[0]
@@ -1640,7 +1644,8 @@ class TFProcess:
 
         # final dense layer
         output = tf.keras.layers.Dense(
-            emb_size, name=name + "/dense", kernel_initializer=initializer)(scaled_attention)
+            emb_size, name=name + "/dense",
+            kernel_initializer=initializer)(scaled_attention)
         return output, attention_weights
 
     # 2-layer dense feed-forward network in encoder blocks
@@ -1652,29 +1657,38 @@ class TFProcess:
         else:
             activation = self.ffn_activation
 
-        dense1 = tf.keras.layers.Dense(
-            dff, name=name + "/dense1", kernel_initializer=initializer, activation=activation)(inputs)
+        dense1 = tf.keras.layers.Dense(dff,
+                                       name=name + "/dense1",
+                                       kernel_initializer=initializer,
+                                       activation=activation)(inputs)
 
-        out = tf.keras.layers.Dense(
-            emb_size, name=name + "/dense2", kernel_initializer=initializer)(dense1)
+        out = tf.keras.layers.Dense(emb_size,
+                                    name=name + "/dense2",
+                                    kernel_initializer=initializer)(dense1)
         return out
 
-    def encoder_layer(self, inputs, emb_size: int, d_model: int, num_heads: int, dff: int, name: str, training: bool):
+    def encoder_layer(self, inputs, emb_size: int, d_model: int,
+                      num_heads: int, dff: int, name: str, training: bool):
         # DeepNorm
-        alpha = tf.cast(tf.math.pow(
-            2. * self.encoder_layers, -0.25), self.model_dtype)
-        beta = tf.cast(tf.math.pow(
-            8. * self.encoder_layers, -0.25), self.model_dtype)
+        alpha = tf.cast(tf.math.pow(2. * self.encoder_layers, -0.25),
+                        self.model_dtype)
+        beta = tf.cast(tf.math.pow(8. * self.encoder_layers, -0.25),
+                       self.model_dtype)
         xavier_norm = tf.keras.initializers.VarianceScaling(
             scale=beta, mode="fan_avg", distribution="truncated_normal", seed=42)
 
         # multihead attention
-        attn_output, attn_wts = self.mha(
-            inputs, emb_size, d_model, num_heads, xavier_norm, name=name + "/mha")
+        attn_output, attn_wts = self.mha(inputs,
+                                         emb_size,
+                                         d_model,
+                                         num_heads,
+                                         xavier_norm,
+                                         name=name + "/mha")
 
         # dropout for weight regularization
-        attn_output = tf.keras.layers.Dropout(
-            self.dropout_rate, name=name + "/dropout1")(attn_output, training=training)
+        attn_output = tf.keras.layers.Dropout(self.dropout_rate,
+                                              name=name +
+                                              "/dropout1")(attn_output, training=training)
         # skip connection + layernorm
         out1 = inputs + attn_output * alpha
         if not self.skip_first_ln:
@@ -1682,31 +1696,44 @@ class TFProcess:
                 name=name+"/ln1")(out1)
 
         # feed-forward network
-        ffn_output = self.ffn(out1, emb_size, dff,
-                              xavier_norm, name=name + "/ffn")
-        ffn_output = tf.keras.layers.Dropout(
-            self.dropout_rate, name=name + "/dropout2")(ffn_output, training=training)
+        ffn_output = self.ffn(out1,
+                              emb_size,
+                              dff,
+                              xavier_norm,
+                              name=name + "/ffn")
+        ffn_output = tf.keras.layers.Dropout(self.dropout_rate,
+                                             name=name +
+                                             "/dropout2")(ffn_output, training=training)
 
         out2 = self.encoder_norm(
             name=name+"/ln2")(out1 + ffn_output * alpha)
 
-            
-
         return out2, attn_wts
 
-    def smolgen_weights(self, inputs, heads: int, hidden_channels: int, hidden_sz: int, gen_sz: int, name: str, activation="swish"):
-        compressed = tf.keras.layers.Dense(
-            hidden_channels, name=name+"/compress", use_bias=False)(inputs)
+    def smolgen_weights(self,
+                        inputs,
+                        heads: int,
+                        hidden_channels: int,
+                        hidden_sz: int,
+                        gen_sz: int,
+                        name: str,
+                        activation="swish"):
+        compressed = tf.keras.layers.Dense(hidden_channels,
+                                           name=name+"/compress",
+                                           use_bias=False)(inputs)
         compressed = tf.reshape(compressed, [-1, 64 * hidden_channels])
-        hidden = tf.keras.layers.Dense(
-            hidden_sz, name=name+"/hidden1_dense", activation=activation)(compressed)
+        hidden = tf.keras.layers.Dense(hidden_sz,
+                                       name=name+"/hidden1_dense",
+                                       activation=activation)(compressed)
+        hidden = tf.keras.layers.LayerNormalization(name=name+
+                                                    "/hidden1_ln")(hidden)
 
-        hidden = tf.keras.layers.LayerNormalization(
-            name=name+"/hidden1_ln")(hidden)
-        gen_from = tf.keras.layers.Dense(
-            heads * gen_sz, name=name+"/gen_from", activation=activation)(hidden)
-        gen_from = tf.keras.layers.LayerNormalization(
-            name=name+"/gen_from_ln", center=True)(gen_from)
+        gen_from = tf.keras.layers.Dense(heads * gen_sz,
+                                         name=name+"/gen_from",
+                                         activation=activation)(hidden)
+        gen_from = tf.keras.layers.LayerNormalization(name=name+
+                                                      "/gen_from_ln",
+                                                      center=True)(gen_from)
         gen_from = tf.reshape(gen_from, [-1, heads, gen_sz])
 
         out = self.smol_weight_gen_dense(gen_from)
@@ -1794,8 +1821,11 @@ class TFProcess:
 
         attn_wts = []
         for i in range(self.encoder_layers):
-            flow, attn_wts_l = self.encoder_layer(flow, self.embedding_size, self.encoder_d_model,
-                                                  self.encoder_heads, self.encoder_dff,
+            flow, attn_wts_l = self.encoder_layer(flow,
+                                                  self.embedding_size,
+                                                  self.encoder_d_model,
+                                                  self.encoder_heads,
+                                                  self.encoder_dff,
                                                   name=name+"encoder_{}".format(i + 1), training=True)
             attn_wts.append(attn_wts_l)
 
