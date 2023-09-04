@@ -35,8 +35,8 @@ sample_record() also skips most training records to avoid sampling over-correlat
 positions since they typically are from sequential positions in a game.
 
 Current implementation of "diff focus" also is in sample_record() and works by
-probabilistically skipping records according to how accurate the no-search 
-eval ('orig_q') is compared to eval after search ('best_q') as well as the
+probabilistically skipping records according to how accurate the no-search
+eval ("orig_q") is compared to eval after search ("best_q") as well as the
 recorded policy_kld (a measure of difference between no search policy and the
 final policy distribution). It does not use draw values at this point. Putting
 diff focus here is efficient because it runs in parallel workers and peeks at
@@ -66,17 +66,18 @@ import shufflebuffer as sb
 import struct
 import unittest
 import gzip
+from time import time, sleep
 from select import select
 
-V6_VERSION = struct.pack('i', 6)
-V5_VERSION = struct.pack('i', 5)
-CLASSICAL_INPUT = struct.pack('i', 1)
-V4_VERSION = struct.pack('i', 4)
-V3_VERSION = struct.pack('i', 3)
-V6_STRUCT_STRING = '4si7432s832sBBBBBBBbfffffffffffffffIHH4H'
-V5_STRUCT_STRING = '4si7432s832sBBBBBBBbfffffff'
-V4_STRUCT_STRING = '4s7432s832sBBBBBBBbffff'
-V3_STRUCT_STRING = '4s7432s832sBBBBBBBb'
+V6_VERSION = struct.pack("i", 6)
+V5_VERSION = struct.pack("i", 5)
+CLASSICAL_INPUT = struct.pack("i", 1)
+V4_VERSION = struct.pack("i", 4)
+V3_VERSION = struct.pack("i", 3)
+V6_STRUCT_STRING = "4si7432s832sBBBBBBBbfffffffffffffffIHHff"
+V5_STRUCT_STRING = "4si7432s832sBBBBBBBbfffffff"
+V4_STRUCT_STRING = "4s7432s832sBBBBBBBbffff"
+V3_STRUCT_STRING = "4s7432s832sBBBBBBBb"
 
 
 def reverse_expand_bits(plane):
@@ -165,12 +166,12 @@ class ChunkParserInner:
         """
         Read data and yield batches of raw tensors.
 
-        'parent' the outer chunk parser to store processes. Must not be stored by self directly or indirectly.
-        'chunks' list of chunk filenames.
-        'shuffle_size' is the size of the shuffle buffer.
-        'sample' is the rate to down-sample.
-        'diff_focus_min', 'diff_focus_slope', 'diff_focus_q_weight' and 'diff_focus_pol_scale' control diff focus
-        'workers' is the number of child workers to use.
+        "parent" the outer chunk parser to store processes. Must not be stored by self directly or indirectly.
+        "chunks" list of chunk filenames.
+        "shuffle_size" is the size of the shuffle buffer.
+        "sample" is the rate to down-sample.
+        "diff_focus_min", "diff_focus_slope", "diff_focus_q_weight" and "diff_focus_pol_scale" control diff focus
+        "workers" is the number of child workers to use.
 
         The data is represented in a number of formats through this dataflow
         pipeline. In order, they are:
@@ -182,7 +183,7 @@ class ChunkParserInner:
 
         raw: A byte string holding raw tensors contenated together. This is
         used to pass data from the workers to the parent. Exists because
-        TensorFlow doesn't have a fast way to unpack bit vectors. 7950 bytes
+        TensorFlow doesn"t have a fast way to unpack bit vectors. 7950 bytes
         long.
         """
 
@@ -239,7 +240,7 @@ class ChunkParserInner:
 
     def init_structs(self):
         """
-        struct.Struct doesn't pickle, so it needs to be separately
+        struct.Struct doesn"t pickle, so it needs to be separately
         constructed in workers.
         """
         self.v6_struct = struct.Struct(V6_STRUCT_STRING)
@@ -294,7 +295,8 @@ class ChunkParserInner:
         // Indices in the probabilities array.
         uint16_t played_idx;                         8344
         uint16_t best_idx;                           8346
-        uint64_t reserved;                           8348
+        float pol_kld;                               8348
+        float q_st;                                  8352
         """
         # unpack the V6 content from raw byte array, arbitrarily chose 4 2-byte values
         # for the 8 "reserved" bytes
@@ -302,8 +304,7 @@ class ChunkParserInner:
          stm, rule50_count, invariance_info, dep_result, root_q, best_q,
          root_d, best_d, root_m, best_m, plies_left, result_q, result_d,
          played_q, played_d, played_m, orig_q, orig_d, orig_m, visits,
-         played_idx, best_idx, reserved1, reserved2, reserved3,
-         reserved4) = self.v6_struct.unpack(content)
+         played_idx, best_idx, pol_kld, q_st) = self.v6_struct.unpack(content)
         """
         v5 struct format was (8308 bytes total)
             int32 version (4 bytes)
@@ -330,7 +331,7 @@ class ChunkParserInner:
         # so copy that over if the new ply_count is not populated.
         if plies_left == 0:
             plies_left = invariance_info
-        plies_left = struct.pack('f', plies_left)
+        plies_left = struct.pack("f", plies_left)
 
         assert input_format == self.expected_input_format
 
@@ -340,25 +341,25 @@ class ChunkParserInner:
         rule50_divisor = 99.0
         if input_format > 3:
             rule50_divisor = 100.0
-        rule50_plane = struct.pack('f', rule50_count / rule50_divisor) * 64
+        rule50_plane = struct.pack("f", rule50_count / rule50_divisor) * 64
 
         if input_format == 1:
             middle_planes = self.flat_planes[us_ooo] + \
-                            self.flat_planes[us_oo] + \
-                            self.flat_planes[them_ooo] + \
-                            self.flat_planes[them_oo] + \
-                            self.flat_planes[stm]
+                self.flat_planes[us_oo] + \
+                self.flat_planes[them_ooo] + \
+                self.flat_planes[them_oo] + \
+                self.flat_planes[stm]
         elif input_format == 2:
             # Each inner array has to be reversed as these fields are in opposite endian to the planes data.
             them_ooo_bytes = reverse_expand_bits(them_ooo)
             us_ooo_bytes = reverse_expand_bits(us_ooo)
             them_oo_bytes = reverse_expand_bits(them_oo)
             us_oo_bytes = reverse_expand_bits(us_oo)
-            middle_planes = us_ooo_bytes + (6*8*4) * b'\x00' + them_ooo_bytes + \
-                            us_oo_bytes + (6*8*4) * b'\x00' + them_oo_bytes + \
-                            self.flat_planes[0] + \
-                            self.flat_planes[0] + \
-                            self.flat_planes[stm]
+            middle_planes = us_ooo_bytes + (6*8*4) * b"\x00" + them_ooo_bytes + \
+                us_oo_bytes + (6*8*4) * b"\x00" + them_oo_bytes + \
+                self.flat_planes[0] + \
+                self.flat_planes[0] + \
+                self.flat_planes[stm]
         elif input_format == 3 or input_format == 4 or input_format == 132 or input_format == 5 or input_format == 133:
             # Each inner array has to be reversed as these fields are in opposite endian to the planes data.
             them_ooo_bytes = reverse_expand_bits(them_ooo)
@@ -366,46 +367,54 @@ class ChunkParserInner:
             them_oo_bytes = reverse_expand_bits(them_oo)
             us_oo_bytes = reverse_expand_bits(us_oo)
             enpassant_bytes = reverse_expand_bits(stm)
-            middle_planes = us_ooo_bytes + (6*8*4) * b'\x00' + them_ooo_bytes + \
-                            us_oo_bytes + (6*8*4) * b'\x00' + them_oo_bytes + \
-                            self.flat_planes[0] + \
-                            self.flat_planes[0] + \
-                            (7*8*4) * b'\x00' + enpassant_bytes
+            middle_planes = us_ooo_bytes + (6*8*4) * b"\x00" + them_ooo_bytes + \
+                us_oo_bytes + (6*8*4) * b"\x00" + them_oo_bytes + \
+                self.flat_planes[0] + \
+                self.flat_planes[0] + \
+                (7*8*4) * b"\x00" + enpassant_bytes
 
-        # Concatenate all byteplanes. Make the last plane all 1's so the NN can
+        # Concatenate all byteplanes. Make the last plane all 1"s so the NN can
         # detect edges of the board more easily
         aux_plus_6_plane = self.flat_planes[0]
         if (input_format == 132
                 or input_format == 133) and invariance_info >= 128:
             aux_plus_6_plane = self.flat_planes[1]
         planes = planes.tobytes() + \
-                 middle_planes + \
-                 rule50_plane + \
-                 aux_plus_6_plane + \
-                 self.flat_planes[1]
+            middle_planes + \
+            rule50_plane + \
+            aux_plus_6_plane + \
+            self.flat_planes[1]
 
         assert len(planes) == ((8 * 13 * 1 + 8 * 1 * 1) * 8 * 8 * 4)
 
         if ver == V6_VERSION:
-            winner = struct.pack('fff', 0.5 * (1.0 - result_d + result_q),
+            winner = struct.pack("fff", 0.5 * (1.0 - result_d + result_q),
                                  result_d, 0.5 * (1.0 - result_d - result_q))
         else:
             dep_result = float(dep_result)
             assert dep_result == 1.0 or dep_result == -1.0 or dep_result == 0.0
-            winner = struct.pack('fff', dep_result == 1.0, dep_result == 0.0,
+            winner = struct.pack("fff", dep_result == 1.0, dep_result == 0.0,
                                  dep_result == -1.0)
 
         best_q_w = 0.5 * (1.0 - best_d + best_q)
         best_q_l = 0.5 * (1.0 - best_d - best_q)
         assert -1.0 <= best_q <= 1.0 and 0.0 <= best_d <= 1.0
-        best_q = struct.pack('fff', best_q_w, best_d, best_q_l)
+        best_q = struct.pack("fff", best_q_w, best_d, best_q_l)
 
-        return (planes, probs, winner, best_q, plies_left)
+        
+        assert abs(q_st) <= 1.0, "q_st out of range: {}".format(q_st)
+
+        q_st = struct.pack("f", q_st)
+
+        played_idx = struct.pack("i", played_idx)
+
+
+        return (planes, probs, winner, best_q, plies_left, q_st, played_idx)
 
     def sample_record(self, chunkdata):
         """
         Randomly sample through the v3/4/5/6 chunk data and select records in v6 format
-        Downsampling to avoid highly correlated positions skips most records, and 
+        Downsampling to avoid highly correlated positions skips most records, and
         diff focus may also skip some records.
         """
         version = chunkdata[0:4]
@@ -430,21 +439,21 @@ class ChunkParserInner:
             # for earlier versions, append fake bytes to record to maintain size
             if version == V3_VERSION:
                 # add 16 bytes of fake root_q, best_q, root_d, best_d to match V4 format
-                record += 16 * b'\x00'
+                record += 16 * b"\x00"
             if version == V3_VERSION or version == V4_VERSION:
                 # add 12 bytes of fake root_m, best_m, plies_left to match V5 format
-                record += 12 * b'\x00'
+                record += 12 * b"\x00"
                 # insert 4 bytes of classical input format tag to match v5 format
                 record = record[:4] + CLASSICAL_INPUT + record[4:]
             if version == V3_VERSION or version == V4_VERSION or version == V5_VERSION:
                 # add 48 byes of fake result_q, result_d etc
-                record += 48 * b'\x00'
+                record += 48 * b"\x00"
 
             if version == V6_VERSION:
                 # diff focus code, peek at best_q, orig_q and pol_kld from record (unpacks as tuple with one item)
-                best_q = struct.unpack('f', record[8284:8288])[0]
-                orig_q = struct.unpack('f', record[8328:8332])[0]
-                pol_kld = struct.unpack('f', record[8348:8352])[0]
+                best_q = struct.unpack("f", record[8284:8288])[0]
+                orig_q = struct.unpack("f", record[8328:8332])[0]
+                pol_kld = struct.unpack("f", record[8348:8352])[0]
 
                 # if orig_q is NaN or pol_kld is 0, accept, else accept based on diff focus
                 if not np.isnan(orig_q) and pol_kld > 0:
@@ -461,9 +470,11 @@ class ChunkParserInner:
 
     def single_file_gen(self, filename):
         try:
-            with gzip.open(filename, 'rb') as chunk_file:
+            with gzip.open(filename, "rb") as chunk_file:
                 version = chunk_file.read(4)
                 chunk_file.seek(0)
+                if version == b'':
+                    return
                 if version == V6_VERSION:
                     record_size = self.v6_struct.size
                 elif version == V5_VERSION:
@@ -473,7 +484,7 @@ class ChunkParserInner:
                 elif version == V3_VERSION:
                     record_size = self.v3_struct.size
                 else:
-                    print('Unknown version {} in file {}'.format(
+                    print("Unknown version {} in file {}".format(
                         version, filename))
                     return
                 while True:
@@ -492,7 +503,8 @@ class ChunkParserInner:
                 yield item
 
     def sequential(self):
-        gen = self.sequential_gen()  # read from all files in order in this process.
+        # read from all files in order in this process.
+        gen = self.sequential_gen()
         gen = self.tuple_gen(gen)  # convert v6->tuple
         gen = self.batch_gen(gen, allow_partial=False)  # assemble into batches
         for b in gen:
@@ -500,7 +512,7 @@ class ChunkParserInner:
 
     def task(self, chunk_filename_queue, writer):
         """
-        Run in fork'ed process, read data from chunkdatasrc, parsing, shuffling and
+        Run in fork"ed process, read data from chunkdatasrc, parsing, shuffling and
         sending v6 data through pipe back to main process.
         """
         self.init_structs()
@@ -551,9 +563,8 @@ class ChunkParserInner:
             s = list(itertools.islice(gen, self.batch_size))
             if not len(s) or (not allow_partial and len(s) != self.batch_size):
                 return
-            yield (b''.join([x[0] for x in s]), b''.join([x[1] for x in s]),
-                   b''.join([x[2] for x in s]), b''.join([x[3] for x in s]),
-                   b''.join([x[4] for x in s]))
+            n_entries = len(s[0])
+            yield tuple([b"".join([x[i] for x in s]) for i in range(n_entries)])
 
     def parse(self):
         """
@@ -623,7 +634,7 @@ class ChunkParserTest(unittest.TestCase):
         batch_size = 4
         records = []
         for i in range(batch_size):
-            record = b''
+            record = b""
             for j in range(2):
                 record += self.v4_record(*truth)
             records.append(record)
@@ -661,5 +672,140 @@ class ChunkParserTest(unittest.TestCase):
         parser.shutdown()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()
+
+
+def apply_alpha(qs, alpha):
+    if not isinstance(qs, np.ndarray):
+        qs = np.array(qs)
+    
+    n = len(qs)
+    signs = (-1)**np.arange(n)
+    qs = qs * signs
+    # Create an array with alpha^(i-j) at (i, j) if this is at most 1 and 0 otherwise.
+    q_st = np.zeros(n)
+    val = 0
+    for i in range(n):
+        if i == 0:
+            val = qs[-1]
+        else:
+            val = alpha * val + qs[-i-1] * (1- alpha)
+        q_st[-i-1] = val
+
+    q_st = q_st * signs
+
+    return q_st
+
+def rescore_file(filename, st_alpha=1-1/6, lt_alpha=1-1/24):
+    v6_struct = struct.Struct(V6_STRUCT_STRING)
+    record_size = v6_struct.size
+    # C:/leeladata/train/training-run2-test77-20211214-1618/*.gz
+    # apply ema with alpha
+    cd_array = bytearray()
+
+    try:
+        with gzip.open(filename, "rb") as chunk_file:
+            chunk_file.seek(0)
+            chunkdata = chunk_file.read()
+            if len(chunkdata) == 0:
+                return
+            version = chunkdata[0:4]
+            assert version == V6_VERSION
+
+            n_chunks = len(chunkdata) // record_size
+
+            # Gather q bytes
+            qs = []
+            for i in range(n_chunks):
+                qs.append(struct.unpack("f", chunkdata[i*record_size+8280:i*record_size+8284])[0])
+
+            q_st = apply_alpha(qs, st_alpha)
+
+            cd_array = bytearray(chunkdata)
+            for i in range(n_chunks):
+                if abs(q_st[i]) > 1 + 1e-6:
+                    print(f"Got {q_st[i]}")
+                # root q 
+                cd_array[i*record_size + 8352:i*record_size + 8356] = struct.pack("f", q_st[i])
+            
+    except Exception as e:
+        print(f"Could not read {filename}, got {e}")
+    
+    with gzip.open(filename, 'wb') as chunk_file:
+        chunk_file.write(bytes(cd_array))
+
+def rescore_files(filenames, progress, task_id, **kwargs):
+    i = 0
+    for filename in filenames:
+        rescore_file(filename, **kwargs)
+        i += 1
+        progress[task_id] = {"progress": i + 1, "total": len(filenames)}
+
+def rescore_files_normal(filenames, **kwargs):
+    n_chunks = 0
+    i = 0
+    for filename in filenames:
+        rescore_file(filename, **kwargs)
+        i += 1
+        print(f"Processed {i} of {len(filenames)} chunks")
+
+
+def rescore(filenames, n_workers=16, n_jobs=1000, **kwargs):
+    from concurrent.futures import ProcessPoolExecutor
+    from rich import progress
+    import multiprocessing
+
+    if isinstance(filenames, str):
+        if not filenames.endswith(".gz"):
+            filenames = filenames + "/*.gz"
+        import glob
+        filenames = glob.glob(filenames)
+    
+    print(f"Rescoring {len(filenames)} files with {n_workers} workers and {n_jobs} jobs each")
+
+    with progress.Progress(
+        "[progress.description]{task.description}",
+        progress.BarColumn(),
+        "[progress.percentage]{task.percentage:>3.1f}%",
+        progress.TimeRemainingColumn(),
+        progress.TimeElapsedColumn(),
+        refresh_per_second=1,  # bit slower updates
+    ) as progress:
+        futures = []  # keep track of the jobs
+        with multiprocessing.Manager() as manager:
+            # this is the key - we share some state between our 
+            # main process and our worker functions
+            _progress = manager.dict()
+            overall_progress_task = progress.add_task("[green]All jobs progress:")
+
+            with ProcessPoolExecutor(max_workers=n_workers) as executor:
+                for n in range(0, n_jobs):  # iterate over the jobs we need to run
+                    # set visible false so we don't have a lot of bars all at once:
+                    task_id = progress.add_task(f"task {n}", visible=False)
+                    lo = n * len(filenames) // n_jobs
+                    hi = min((n + 1) * len(filenames) // n_jobs, len(filenames))
+                    futures.append(executor.submit(rescore_files, filenames[lo:hi], progress=_progress, task_id=task_id, **kwargs))
+
+                # monitor the progress:
+                while (n_finished := sum([future.done() for future in futures])) < len(
+                    futures
+                ):
+                    progress.update(
+                        overall_progress_task, completed=n_finished, total=len(futures)
+                    )
+                    for task_id, update_data in _progress.items():
+                        latest = update_data["progress"]
+                        total = update_data["total"]
+                        # update the progress bar for this task:
+                        progress.update(
+                            task_id,
+                            completed=latest,
+                            total=total,
+                            visible=latest < total,
+                        )
+
+                # raise any errors:
+                for future in futures:
+                    future.result()
+        
